@@ -40,8 +40,10 @@ type azurerm struct {
 	azurerReaders   []*AzureReader
 
 	configuraiton map[string]interface{}
-
-	cache cache.Cache
+	cache         cache.Cache
+	// networkInterfaceAcceleratedNetworking keeps the source-of-truth value from
+	// the Azure Network Interface API so FixResource can preserve it in generated state.
+	networkInterfaceAcceleratedNetworking map[string]bool
 }
 
 // NewProvider returns a AzureRM Provider
@@ -73,10 +75,11 @@ func NewProvider(ctx context.Context, clientID, clientSecret, environment string
 	}
 
 	return &azurerm{
-		tfAzureRMClient: tfp.Meta(),
-		tfProvider:      tfp,
-		azurerReaders:   readers,
-		cache:           cache.New(),
+		tfAzureRMClient:                       tfp.Meta(),
+		tfProvider:                            tfp,
+		azurerReaders:                         readers,
+		cache:                                 cache.New(),
+		networkInterfaceAcceleratedNetworking: make(map[string]bool),
 		configuraiton: map[string]interface{}{
 			"environment": environment,
 		},
@@ -345,14 +348,54 @@ func (a *azurerm) FixResource(t string, v cty.Value) (cty.Value, error) {
 			return v, errors.Wrapf(err, "failed to convert CTY value to GO type")
 		}
 	case "azurerm_network_interface":
-		// Accelerated Networking support (issue #276)
-		// The enable_accelerated_networking attribute is supported on specific VM sizes
-		// and requires the Availability Set to be deployed on an Accelerated Networking enabled cluster.
-		// The Azure API correctly reports the actual state of the NIC, so we preserve
-		// the attribute value as-is during import.
-		// No transformation needed - the attribute is correctly captured from the Azure API.
+		v, err = a.fixNetworkInterfaceAcceleratedNetworking(v)
+		if err != nil {
+			return v, errors.Wrapf(err, "failed to fix azurerm network interface accelerated networking")
+		}
 
 	}
 	return v, nil
+}
+
+func (a *azurerm) setNetworkInterfaceAcceleratedNetworking(id string, enabled bool) {
+	if id == "" {
+		return
+	}
+	if a.networkInterfaceAcceleratedNetworking == nil {
+		a.networkInterfaceAcceleratedNetworking = make(map[string]bool)
+	}
+	a.networkInterfaceAcceleratedNetworking[strings.ToLower(id)] = enabled
+}
+
+func (a *azurerm) fixNetworkInterfaceAcceleratedNetworking(v cty.Value) (cty.Value, error) {
+	if len(a.networkInterfaceAcceleratedNetworking) == 0 || v.IsNull() || !v.IsKnown() || !v.Type().IsObjectType() {
+		return v, nil
+	}
+
+	if !v.Type().HasAttribute("id") {
+		return v, nil
+	}
+
+	idValue := v.GetAttr("id")
+	if idValue.IsNull() || !idValue.IsKnown() {
+		return v, nil
+	}
+
+	var id string
+	if err := gocty.FromCtyValue(idValue, &id); err != nil {
+		return v, errors.Wrapf(err, "failed to convert azurerm network interface id from CTY")
+	}
+	if id == "" {
+		return v, nil
+	}
+
+	enabled, ok := a.networkInterfaceAcceleratedNetworking[strings.ToLower(id)]
+	if !ok {
+		return v, nil
+	}
+
+	values := v.AsValueMap()
+	values["enable_accelerated_networking"] = cty.BoolVal(enabled)
+	return cty.ObjectVal(values), nil
 }
 func (a *azurerm) FilterByTags(tags interface{}) error { return nil }

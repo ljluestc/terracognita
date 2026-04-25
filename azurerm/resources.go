@@ -689,6 +689,9 @@ func networkInterfaces(ctx context.Context, a *azurerm, ar *AzureReader, resourc
 			continue
 		}
 		r := provider.NewResource(*networkInterface.ID, resourceType, a)
+		if props := networkInterface.InterfacePropertiesFormat; props != nil && props.EnableAcceleratedNetworking != nil {
+			a.setNetworkInterfaceAcceleratedNetworking(*networkInterface.ID, *props.EnableAcceleratedNetworking)
+		}
 		resources = append(resources, r)
 	}
 	return resources, nil
@@ -2804,7 +2807,7 @@ func recoveryServicesVaults(ctx context.Context, a *azurerm, ar *AzureReader, re
 	return resources, nil
 }
 
-//Recovery Services - backup
+// Recovery Services - backup
 func backupPolicyVMs(ctx context.Context, a *azurerm, ar *AzureReader, resourceType string, filters *filter.Filter) ([]provider.Resource, error) {
 	vaultNames, err := getRecoveryServicesVaults(ctx, a, ar, RecoveryServicesVault.String(), filters)
 	if err != nil {
