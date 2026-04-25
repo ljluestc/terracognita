@@ -344,6 +344,13 @@ func (a *azurerm) FixResource(t string, v cty.Value) (cty.Value, error) {
 		if err != nil {
 			return v, errors.Wrapf(err, "failed to convert CTY value to GO type")
 		}
+	case "azurerm_network_interface":
+		// Accelerated Networking support (issue #276)
+		// The enable_accelerated_networking attribute is supported on specific VM sizes
+		// and requires the Availability Set to be deployed on an Accelerated Networking enabled cluster.
+		// The Azure API correctly reports the actual state of the NIC, so we preserve
+		// the attribute value as-is during import.
+		// No transformation needed - the attribute is correctly captured from the Azure API.
 
 	}
 	return v, nil
